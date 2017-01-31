@@ -29,6 +29,8 @@ ifeq ($(call is-board-platform-in-list, msm8974 msm8226 msm8610 apq8084 \
     common_flags += -DVENUS_COLOR_FORMAT
 endif
 
+common_flags += -D__STDC_FORMAT_MACROS
+
 common_deps  :=
 kernel_includes :=
 
