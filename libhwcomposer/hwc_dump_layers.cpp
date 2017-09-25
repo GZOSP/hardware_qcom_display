@@ -335,9 +335,9 @@ void HwcDebug::dumpLayer(size_t layerIndex, hwc_layer_1_t hwLayers[])
                 alphaType = kOpaque_SkAlphaType;
                 colorType = kRGBA_8888_SkColorType;
                 break;
-            case HAL_PIXEL_FORMAT_BGRA_8888:
-                tempSkBmpColor = kBGRA_8888_SkColorType;
-                break;
+           // case HAL_PIXEL_FORMAT_BGRA_8888:
+             //   tempSkBmpColor = kBGRA_8888_SkColorType;
+               // break;
             case HAL_PIXEL_FORMAT_RGB_565:
                 alphaType = kOpaque_SkAlphaType;
                 colorType = kRGB_565_SkColorType;
