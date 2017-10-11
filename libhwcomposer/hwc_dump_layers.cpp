@@ -354,7 +354,7 @@ void HwcDebug::dumpLayer(size_t layerIndex, hwc_layer_1_t hwLayers[])
             SkPixmap pixmap(info, (const void*)hnd->base, info.minRowBytes());
             SkFILEWStream file(dumpFilename);
             bResult = SkEncodeImage(&file, pixmap, SkEncodedImageFormat::kPNG, 100);
-            ALOGI("Display[%s] Layer[%d] %s Dump to %s: %s",
+            ALOGI("Display[%s] Layer[%zu] %s Dump to %s: %s",
                 mDisplayName, layerIndex, dumpLogStrPng,
                 dumpFilename, bResult ? "Success" : "Fail");
         } else {
