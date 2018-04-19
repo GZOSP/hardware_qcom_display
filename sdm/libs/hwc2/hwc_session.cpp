@@ -1281,6 +1281,10 @@ void HWCSession::DynamicDebug(const android::Parcel *input_parcel) {
       HWCDebugHandler::DebugQdcm(enable, verbose_level);
       break;
 
+    case qService::IQService::DEBUG_CLIENT:
+      HWCDebugHandler::DebugClient(enable, verbose_level);
+      break;
+
     default:
       DLOGW("type = %d is not supported", type);
   }
