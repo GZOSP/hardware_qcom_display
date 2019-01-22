@@ -47,6 +47,10 @@
 #define HWC_UEVENT_GRAPHICS_FB0 "change@/devices/virtual/graphics/fb0"
 #define HWC_UEVENT_DRM_EXT_HOTPLUG "mdss_mdp/drm/card"
 
+#define MAX_BRIGHTNESS 255
+#define BRIGHTNESS_FILE1 "/sys/class/leds/lcd-backlight/brightness"
+#define BRIGHTNESS_FILE2 "/sys/class/backlight/panel0-backlight/brightness"
+
 static sdm::HWCSession::HWCModuleMethods g_hwc_module_methods;
 
 hwc_module_t HAL_MODULE_INFO_SYM = {
@@ -279,6 +283,17 @@ void HWCSession::InitSupportedDisplaySlots() {
 
   // resize HDR supported map to total number of displays.
   is_hdr_display_.resize(UINT32(base_id));
+
+  char const *brightness_file;
+  if (access(BRIGHTNESS_FILE1, F_OK) == 0) {
+    brightness_file = BRIGHTNESS_FILE1;
+  } else {
+    brightness_file = BRIGHTNESS_FILE2;
+  }
+  brightness_fd_ = open(brightness_file, O_WRONLY);
+  if (brightness_fd_ == -1) {
+    DLOGW("Unable to open brightness file: [%d] %s", errno, strerror(errno));
+  }
 }
 
 int HWCSession::GetDisplayIndex(int dpy) {
@@ -301,6 +316,8 @@ int HWCSession::GetDisplayIndex(int dpy) {
   if (!map_info) {
     return -1;
   }
+
+  close(brightness_fd_);
 
   return INT(map_info->client_id);
 }
@@ -355,7 +372,7 @@ void HWCSession::GetCapabilities(struct hwc2_device *device, uint32_t *outCount,
   if (Debug::Get()->GetProperty(DISABLE_SKIP_VALIDATE_PROP, &value) == kErrorNone) {
     disable_skip_validate = (value == 1);
   }
-  uint32_t count = 1 + (disable_skip_validate ? 0 : 1);
+  uint32_t count = 2 + (disable_skip_validate ? 0 : 1);
 
   if (outCapabilities != nullptr && (*outCount >= count)) {
     outCapabilities[0] = HWC2_CAPABILITY_SKIP_CLIENT_COLOR_TRANSFORM;
@@ -968,6 +985,82 @@ int32_t HWCSession::ValidateDisplay(hwc2_device_t *device, hwc2_display_t displa
   return INT32(status);
 }
 
+int32_t HWCSession::GetDisplayCapabilities(hwc2_device_t* device, hwc2_display_t display,
+        uint32_t* outNumCapabilities, uint32_t* outCapabilities) {
+  if (outNumCapabilities == nullptr) {
+    return INT32(HWC2::Error::None);
+  }
+
+  bool brightness_support = display == HWC_DISPLAY_PRIMARY;
+  int doze_support = 0;
+  auto status = GetDozeSupport(device, display, &doze_support);
+  if (status != HWC2_ERROR_NONE) {
+    DLOGE("Failed to get doze support Error = %d", status);
+    return INT32(status);
+  }
+
+  uint32_t count = 1  + static_cast<uint32_t>(doze_support) + (brightness_support ? 1 : 0);
+  int index = 0;
+  if (outCapabilities != nullptr && (*outNumCapabilities >= count)) {
+    outCapabilities[index++] = HWC2_DISPLAY_CAPABILITY_SKIP_CLIENT_COLOR_TRANSFORM;
+    if (doze_support == 1) {
+      outCapabilities[index++] = HWC2_DISPLAY_CAPABILITY_DOZE;
+    }
+    if (brightness_support) {
+      outCapabilities[index++] = HWC2_DISPLAY_CAPABILITY_BRIGHTNESS;
+    }
+  }
+
+  *outNumCapabilities = count;
+  return INT32(HWC2::Error::None);
+}
+
+int32_t HWCSession::GetDisplayBrightnessSupport(hwc2_device_t *device, hwc2_display_t display,
+                                                bool *out_support) {
+  *out_support = display == HWC_DISPLAY_PRIMARY;
+  return INT32(HWC2::Error::None);
+}
+
+int32_t HWCSession::SetDisplayBrightness(hwc2_device_t *device, hwc2_display_t display,
+                                         float brightness) {
+  if (display != HWC_DISPLAY_PRIMARY) {
+    return INT32(HWC2::Error::BadDisplay);
+  }
+  int backlight = -1;
+  if (brightness == -1.0f) {
+    backlight = 0;
+  } else if (brightness < 0.0f || brightness > 1.0f) {
+    return INT32(HWC2::Error::BadParameter);
+  } else {
+    // 0 is reserved for "backlight off", so we scale the brightness from 1 to MAX_BRIGHTNESS.
+    backlight = (int) ((MAX_BRIGHTNESS - 1.0f) * brightness + 1.0f);
+  }
+  char buff[20];
+  int n = snprintf(buff, sizeof(buff), "%d\n", backlight);
+  if (n < 0 || n >= sizeof(buff)) {
+    return INT32(HWC2::Error::BadParameter);
+  }
+
+  HWCSession *hwc_session = static_cast<HWCSession *>(device);
+  long error = lseek(hwc_session->brightness_fd_, 0, SEEK_SET);
+  if (error == -1) {
+    DLOGW("Failed to rewind brightness file: [%d] %s", errno, strerror(errno));
+    return INT32(HWC2::Error::NoResources);
+  }
+  error = write(hwc_session->brightness_fd_, buff, (size_t) n);
+  if (error == -1) {
+    DLOGW("Failed to write to brightness file: [%d] %s", errno, strerror(errno));
+    return INT32(HWC2::Error::NoResources);
+  }
+  error = fsync(hwc_session->brightness_fd_);
+  if (error == -1) {
+    DLOGW("Failed to flush brightness file: [%d] %s", errno, strerror(errno));
+    return INT32(HWC2::Error::NoResources);
+  }
+
+  return INT32(HWC2::Error::None);
+}
+
 hwc2_function_pointer_t HWCSession::GetFunction(struct hwc2_device *device,
                                                 int32_t int_descriptor) {
   auto descriptor = static_cast<HWC2::FunctionDescriptor>(int_descriptor);
@@ -1074,7 +1167,9 @@ hwc2_function_pointer_t HWCSession::GetFunction(struct hwc2_device *device,
     case HWC2::FunctionDescriptor::GetDisplayCapabilities:
       return AsFP<HWC2_PFN_GET_DISPLAY_CAPABILITIES>(HWCSession::GetDisplayCapabilities);
     case HWC2::FunctionDescriptor::GetDisplayBrightnessSupport:
-      return AsFP<HWC2_PFN_GET_DISPLAY_BRIGHTNESS_SUPPORT>(HWCSession::GetDisplayBrightnessSupport);
+        return AsFP<HWC2_PFN_GET_DISPLAY_BRIGHTNESS_SUPPORT>(GetDisplayBrightnessSupport);
+    case HWC2::FunctionDescriptor::SetDisplayBrightness:
+        return AsFP<HWC2_PFN_SET_DISPLAY_BRIGHTNESS>(SetDisplayBrightness);
     default:
       DLOGD("Unknown/Unimplemented function descriptor: %d (%s)", int_descriptor,
             to_string(descriptor).c_str());
@@ -2499,63 +2594,6 @@ void HWCSession::ActivateDisplay(hwc2_display_t disp, bool enable) {
   }
   hwc_display_[disp]->ActivateDisplay(enable);
   DLOGI("Disp: %d, Active: %d", disp, enable);
-}
-
-int32_t HWCSession::GetDisplayCapabilities(hwc2_device_t *device, hwc2_display_t display,
-                                           uint32_t *outNumCapabilities,
-                                           uint32_t *outCapabilities) {
-  if (!outNumCapabilities || !device) {
-    return HWC2_ERROR_BAD_PARAMETER;
-  }
-
-  if (display >= HWCCallbacks::kNumDisplays) {
-    return HWC2_ERROR_BAD_DISPLAY;
-  }
-
-  HWCSession *hwc_session = static_cast<HWCSession *>(device);
-  HWCDisplay *hwc_display = hwc_session->hwc_display_[display];
-  if (!hwc_display) {
-    DLOGE("Expected valid hwc_display");
-    return HWC2_ERROR_BAD_PARAMETER;
-  }
-  bool isBuiltin = (hwc_display->GetDisplayClass() == DISPLAY_CLASS_BUILTIN);
-  if (!outCapabilities) {
-    *outNumCapabilities = 0;
-    if (isBuiltin) {
-      *outNumCapabilities = 2;
-    }
-    return HWC2_ERROR_NONE;
-  } else {
-    if (isBuiltin) {
-      // TODO(user): Handle SKIP_CLIENT_COLOR_TRANSFORM based on DSPP availability
-      outCapabilities[0] = HWC2_DISPLAY_CAPABILITY_SKIP_CLIENT_COLOR_TRANSFORM;
-      outCapabilities[1] = HWC2_DISPLAY_CAPABILITY_DOZE;
-      *outNumCapabilities = 2;
-    }
-    return HWC2_ERROR_NONE;
-  }
-}
-
-int32_t HWCSession::GetDisplayBrightnessSupport(hwc2_device_t *device, hwc2_display_t display,
-                                                bool *outSupport) {
-  if (!device || !outSupport) {
-    return HWC2_ERROR_BAD_PARAMETER;
-  }
-
-  if (display >= HWCCallbacks::kNumDisplays) {
-    return HWC2_ERROR_BAD_DISPLAY;
-  }
-
-  HWCSession *hwc_session = static_cast<HWCSession *>(device);
-  HWCDisplay *hwc_display = hwc_session->hwc_display_[display];
-  if (!hwc_display) {
-    DLOGE("Expected valid hwc_display");
-    return HWC2_ERROR_BAD_PARAMETER;
-  }
-  // This function isn't actually used in the framework
-  // The capability is used instead
-  *outSupport = false;
-  return HWC2_ERROR_NONE;
 }
 
 HWC2::Error HWCSession::ValidateDisplayInternal(hwc2_display_t display, uint32_t *out_num_types,

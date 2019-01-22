@@ -192,12 +192,12 @@ class HWCSession : hwc2_device_t, HWCUEventListener, IDisplayConfig, public qCli
                                 int32_t /*RenderIntent*/ *int_out_intents);
   static int32_t GetDisplayCapabilities(hwc2_device_t *device, hwc2_display_t display,
                                         uint32_t *outNumCapabilities, uint32_t *outCapabilities);
-  static int32_t GetDisplayBrightnessSupport(hwc2_device_t *device, hwc2_display_t display,
-                                             bool *outSupport);
   static int32_t SetVsyncEnabled(hwc2_device_t *device, hwc2_display_t display,
                                  int32_t int_enabled);
   static int32_t GetDozeSupport(hwc2_device_t *device, hwc2_display_t display,
                                 int32_t *out_support);
+  static int32_t SetDisplayBrightness(hwc2_device_t *device, hwc2_display_t display,
+                                      float brightness);
 
   static Locker locker_[HWCCallbacks::kNumDisplays];
 
@@ -384,6 +384,7 @@ class HWCSession : hwc2_device_t, HWCUEventListener, IDisplayConfig, public qCli
   int hpd_bpp_ = 0;
   int hpd_pattern_ = 0;
   std::bitset<HWCCallbacks::kNumDisplays> pending_refresh_;
+  int brightness_fd_ = -1;
 };
 
 }  // namespace sdm
