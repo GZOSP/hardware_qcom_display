@@ -30,11 +30,14 @@
 #define DEBUG 0
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <string.h>
 #include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>
 #include <cutils/log.h>
 #include <errno.h>
+#include <string.h>
+
 #include "gralloc_priv.h"
 #include "ionalloc.h"
 
