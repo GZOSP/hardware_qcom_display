@@ -2265,6 +2265,7 @@ bool HWCDisplay::CanSkipValidate() {
   }
 
   if (!layer_set_.empty() && !display_intf_->CanSkipValidate()) {
+    DLOGV_IF(kTagClient, "Display needs validation %d", id_);
     return false;
   }
 
