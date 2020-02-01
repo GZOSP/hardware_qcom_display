@@ -684,6 +684,7 @@ LayerBufferFormat HWCLayer::GetSDMFormat(const int32_t &source, const int flags)
       format = kFormatYCrCb420PlanarStride16;
       break;
     case HAL_PIXEL_FORMAT_YCrCb_420_SP:
+    case HAL_PIXEL_FORMAT_NV21_ZSL:
       format = kFormatYCrCb420SemiPlanar;
       break;
     case HAL_PIXEL_FORMAT_YCbCr_420_SP:
