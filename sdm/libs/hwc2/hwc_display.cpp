@@ -512,6 +512,10 @@ void HWCDisplay::BuildLayerStack() {
     working_primaries = WidestPrimaries(working_primaries,
                                         layer->input_buffer.color_metadata.colorPrimaries);
 
+    if (hwc_layer->IsColorTransformSet()) {
+      layer->flags.skip = true;
+    }
+
     // set default composition as GPU for SDM
     layer->composition = kCompositionGPU;
 
