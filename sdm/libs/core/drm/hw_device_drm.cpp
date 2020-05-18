@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2017-2019, The Linux Foundation. All rights reserved.
+* Copyright (c) 2017-2020, The Linux Foundation. All rights reserved.
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are
@@ -100,7 +100,6 @@ using sde_drm::DRMBlendType;
 using sde_drm::DRMSrcConfig;
 using sde_drm::DRMOps;
 using sde_drm::DRMTopology;
-using sde_drm::DRMPowerMode;
 using sde_drm::DRMSecureMode;
 using sde_drm::DRMSecurityLevel;
 using sde_drm::DRMCscType;
@@ -804,27 +803,6 @@ void HWDeviceDRM::GetHWDisplayPortAndMode() {
   return;
 }
 
-void HWDeviceDRM::GetHWPanelMaxBrightness() {
-  char brightness[kMaxStringLength] = {0};
-  string kMaxBrightnessNode = "/sys/class/backlight/panel0-backlight/max_brightness";
-
-  hw_panel_info_.panel_max_brightness = 255;
-  int fd = Sys::open_(kMaxBrightnessNode.c_str(), O_RDONLY);
-  if (fd < 0) {
-    DLOGW("Failed to open max brightness node = %s, error = %s", kMaxBrightnessNode.c_str(),
-          strerror(errno));
-    return;
-  }
-
-  if (Sys::pread_(fd, brightness, sizeof(brightness), 0) > 0) {
-    hw_panel_info_.panel_max_brightness = atoi(brightness);
-    DLOGI_IF(kTagDisplay, "Max brightness level = %d", hw_panel_info_.panel_max_brightness);
-  } else {
-    DLOGW("Failed to read max brightness level. error = %s", strerror(errno));
-  }
-
-  Sys::close_(fd);
-}
 
 DisplayError HWDeviceDRM::GetActiveConfig(uint32_t *active_config) {
   *active_config = current_mode_index_;
@@ -922,6 +900,7 @@ DisplayError HWDeviceDRM::PowerOn(const HWQosData &qos_data, int *release_fence)
     DLOGD_IF(kTagDriverConfig, "RELEASE fence created: fd:%d", *release_fence);
   }
   pending_doze_ = false;
+  last_power_mode_ = DRMPowerMode::ON;
 
   return kErrorNone;
 }
@@ -948,6 +927,7 @@ DisplayError HWDeviceDRM::PowerOff(bool teardown) {
     return kErrorHardware;
   }
   pending_doze_ = false;
+  last_power_mode_ = DRMPowerMode::OFF;
 
   return kErrorNone;
 }
@@ -955,7 +935,7 @@ DisplayError HWDeviceDRM::PowerOff(bool teardown) {
 DisplayError HWDeviceDRM::Doze(const HWQosData &qos_data, int *release_fence) {
   DTRACE_SCOPED();
 
-  if (!first_cycle_) {
+  if (first_cycle_ || last_power_mode_ != DRMPowerMode::OFF) {
     pending_doze_ = true;
     return kErrorNone;
   }
@@ -983,6 +963,9 @@ DisplayError HWDeviceDRM::Doze(const HWQosData &qos_data, int *release_fence) {
     *release_fence = static_cast<int>(release_fence_t);
     DLOGD_IF(kTagDriverConfig, "RELEASE fence created: fd:%d", *release_fence);
   }
+
+  last_power_mode_ = DRMPowerMode::DOZE;
+
   return kErrorNone;
 }
 
@@ -1016,6 +999,7 @@ DisplayError HWDeviceDRM::DozeSuspend(const HWQosData &qos_data, int *release_fe
   }
 
   pending_doze_ = false;
+  last_power_mode_ = DRMPowerMode::DOZE_SUSPEND;
   return kErrorNone;
 }
 
@@ -1201,8 +1185,15 @@ void HWDeviceDRM::SetupAtomic(HWLayers *hw_layers, bool validate) {
     SetSolidfillStages();
     SetQOSData(qos_data);
     drm_atomic_intf_->Perform(DRMOps::CRTC_SET_SECURITY_LEVEL, token_.crtc_id, crtc_security_level);
-    sde_drm::DRMQsyncMode mode = hw_layers->hw_avr_info.enable ? sde_drm::DRMQsyncMode::CONTINUOUS :
-                                                                 sde_drm::DRMQsyncMode::NONE;
+  }
+
+  if (hw_layers->hw_avr_info.update) {
+    sde_drm::DRMQsyncMode mode = sde_drm::DRMQsyncMode::NONE;
+    if (hw_layers->hw_avr_info.mode == kContinuousMode) {
+      mode = sde_drm::DRMQsyncMode::CONTINUOUS;
+    } else if (hw_layers->hw_avr_info.mode == kOneShotMode) {
+      mode = sde_drm::DRMQsyncMode::ONESHOT;
+    }
     drm_atomic_intf_->Perform(DRMOps::CONNECTOR_SET_QSYNC_MODE, token_.conn_id, mode);
   }
 
@@ -1252,10 +1243,13 @@ void HWDeviceDRM::SetupAtomic(HWLayers *hw_layers, bool validate) {
     drm_atomic_intf_->Perform(DRMOps::CONNECTOR_SET_CRTC, token_.conn_id, token_.crtc_id);
     DRMPowerMode power_mode = pending_doze_ ? DRMPowerMode::DOZE : DRMPowerMode::ON;
     drm_atomic_intf_->Perform(DRMOps::CONNECTOR_SET_POWER_MODE, token_.conn_id, power_mode);
+    last_power_mode_ = power_mode;
   } else if (pending_doze_ && !validate) {
     drm_atomic_intf_->Perform(DRMOps::CRTC_SET_ACTIVE, token_.crtc_id, 1);
     drm_atomic_intf_->Perform(DRMOps::CONNECTOR_SET_POWER_MODE, token_.conn_id, DRMPowerMode::DOZE);
     pending_doze_ = false;
+    synchronous_commit_ = true;
+    last_power_mode_ = DRMPowerMode::DOZE;
   }
 
   // Set CRTC mode, only if display config changes
@@ -1695,59 +1689,7 @@ DisplayError HWDeviceDRM::SetRefreshRate(uint32_t refresh_rate) {
   return kErrorNotSupported;
 }
 
-DisplayError HWDeviceDRM::SetPanelBrightness(int level) {
-  DisplayError err = kErrorNone;
-  char buffer[kMaxSysfsCommandLength] = {0};
 
-  DLOGV_IF(kTagDriverConfig, "Set brightness level to %d", level);
-  int fd = Sys::open_(kBrightnessNode, O_RDWR);
-  if (fd < 0) {
-    DLOGV_IF(kTagDriverConfig, "Failed to open node = %s, error = %s ", kBrightnessNode,
-             strerror(errno));
-    return kErrorFileDescriptor;
-  }
-
-  int32_t bytes = snprintf(buffer, kMaxSysfsCommandLength, "%d\n", level);
-  ssize_t ret = Sys::pwrite_(fd, buffer, static_cast<size_t>(bytes), 0);
-  if (ret <= 0) {
-    DLOGV_IF(kTagDriverConfig, "Failed to write to node = %s, error = %s ", kBrightnessNode,
-             strerror(errno));
-    err = kErrorHardware;
-  }
-
-  Sys::close_(fd);
-
-  return err;
-}
-
-DisplayError HWDeviceDRM::GetPanelBrightness(int *level) {
-  DisplayError err = kErrorNone;
-  char brightness[kMaxStringLength] = {0};
-
-  if (!level) {
-    DLOGV_IF(kTagDriverConfig, "Invalid input, null pointer.");
-    return kErrorParameters;
-  }
-
-  int fd = Sys::open_(kBrightnessNode, O_RDWR);
-  if (fd < 0) {
-    DLOGV_IF(kTagDriverConfig, "Failed to open brightness node = %s, error = %s", kBrightnessNode,
-             strerror(errno));
-    return kErrorFileDescriptor;
-  }
-
-  if (Sys::pread_(fd, brightness, sizeof(brightness), 0) > 0) {
-    *level = atoi(brightness);
-    DLOGV_IF(kTagDriverConfig, "Brightness level = %d", *level);
-  } else {
-    DLOGV_IF(kTagDriverConfig, "Failed to read panel brightness");
-    err = kErrorHardware;
-  }
-
-  Sys::close_(fd);
-
-  return err;
-}
 
 DisplayError HWDeviceDRM::GetHWScanInfo(HWScanInfo *scan_info) {
   return kErrorNotSupported;
@@ -1937,6 +1879,7 @@ void HWDeviceDRM::UpdateMixerAttributes() {
   mixer_attributes_.split_left = display_attributes_[index].is_device_split
                                      ? hw_panel_info_.split_info.left_split
                                      : mixer_attributes_.width;
+  mixer_attributes_.mixer_index = token_.crtc_index;
   DLOGI("Mixer WxH %dx%d for %s", mixer_attributes_.width, mixer_attributes_.height, device_name_);
   update_mode_ = true;
 }

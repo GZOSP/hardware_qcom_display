@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2017-2019, The Linux Foundation. All rights reserved.
+* Copyright (c) 2017-2020, The Linux Foundation. All rights reserved.
 *
 * Redistribution and use in source and binary forms, with or without
 * modification, are permitted provided that the following conditions are
@@ -291,38 +291,28 @@ Return<void> HWCSession::getDisplayAttributes(uint32_t configIndex,
 }
 
 Return<int32_t> HWCSession::setPanelBrightness(uint32_t level) {
-  SEQUENCE_WAIT_SCOPE_LOCK(locker_[HWC_DISPLAY_PRIMARY]);
-  int32_t error = -EINVAL;
-
-  if (hwc_display_[HWC_DISPLAY_PRIMARY]) {
-    error = hwc_display_[HWC_DISPLAY_PRIMARY]->SetPanelBrightness(INT(level));
-    if (error) {
-      DLOGE("Failed to set the panel brightness = %d. Error = %d", level, error);
-    }
+  if (!(0 <= level && level <= 255)) {
+    return -EINVAL;
   }
 
-  return error;
-}
-
-int32_t HWCSession::GetPanelBrightness(int *level) {
-  SEQUENCE_WAIT_SCOPE_LOCK(locker_[HWC_DISPLAY_PRIMARY]);
-  int32_t error = -EINVAL;
-
-  if (hwc_display_[HWC_DISPLAY_PRIMARY]) {
-    error = hwc_display_[HWC_DISPLAY_PRIMARY]->GetPanelBrightness(level);
-    if (error) {
-      DLOGE("Failed to get the panel brightness. Error = %d", error);
-    }
+  hwc2_device_t *device = static_cast<hwc2_device_t *>(this);
+  if (level == 0) {
+    return INT32(SetDisplayBrightness(device, HWC_DISPLAY_PRIMARY, -1.0f));
+  } else {
+    return INT32(SetDisplayBrightness(device, HWC_DISPLAY_PRIMARY, (level - 1)/254.0f));
   }
-
-  return error;
 }
 
 Return<void> HWCSession::getPanelBrightness(getPanelBrightness_cb _hidl_cb) {
-  int level = 0;
-  int32_t error = GetPanelBrightness(&level);
+  float brightness = -1.0f;
+  int32_t error = -EINVAL;
 
-  _hidl_cb(error, static_cast<uint32_t>(level));
+  error = getDisplayBrightness(HWC_DISPLAY_PRIMARY, &brightness);
+  if (brightness == -1.0f) {
+    _hidl_cb(error, 0);
+  } else {
+    _hidl_cb(error, static_cast<uint32_t>(254.0f*brightness + 1));
+  }
 
   return Void();
 }
@@ -713,6 +703,14 @@ Return<bool> HWCSession::isHDRSupported(uint32_t disp_id) {
     DLOGE("Not valid display");
     return false;
   }
+  SCOPE_LOCK(locker_[disp_id]);
+
+  if (is_hdr_display_.size() <= disp_id) {
+    DLOGW("is_hdr_display_ is not initialized for display %d!! Reporting it as HDR not supported",
+          disp_id);
+    return false;
+  }
+
   return static_cast<bool>(is_hdr_display_[disp_id]);
 }
 
@@ -866,6 +864,61 @@ Return<int32_t> HWCSession::setCWBOutputBuffer(const ::android::sp<IDisplayCWBCa
                                                uint32_t disp_id, const Rect &rect,
                                                bool post_processed, const hidl_handle& buffer) {
   return -1;
+}
+
+Return<int32_t> HWCSession::setQsyncMode(uint32_t disp_id, IDisplayConfig::QsyncMode mode) {
+  SEQUENCE_WAIT_SCOPE_LOCK(locker_[disp_id]);
+  if (!hwc_display_[disp_id]) {
+    return -1;
+  }
+
+  QSyncMode qsync_mode = kQSyncModeNone;
+  switch (mode) {
+    case IDisplayConfig::QsyncMode::NONE:
+      qsync_mode = kQSyncModeNone;
+      break;
+    case IDisplayConfig::QsyncMode::WAIT_FOR_FENCES_ONE_FRAME:
+      qsync_mode = kQsyncModeOneShot;
+      break;
+    case IDisplayConfig::QsyncMode::WAIT_FOR_FENCES_EACH_FRAME:
+      qsync_mode = kQsyncModeOneShotContinuous;
+      break;
+    case IDisplayConfig::QsyncMode::WAIT_FOR_COMMIT_EACH_FRAME:
+      qsync_mode = kQSyncModeContinuous;
+      break;
+  }
+
+  hwc_display_[disp_id]->SetQSyncMode(qsync_mode);
+  return 0;
+}
+
+int32_t HWCSession::getDisplayBrightness(uint32_t display, float *brightness) {
+  if (!brightness) {
+    return HWC2_ERROR_BAD_PARAMETER;
+  }
+
+  if (display >= HWCCallbacks::kNumDisplays) {
+    return HWC2_ERROR_BAD_DISPLAY;
+  }
+
+  SEQUENCE_WAIT_SCOPE_LOCK(locker_[display]);
+  int32_t error = -EINVAL;
+  *brightness = -1.0f;
+
+  HWCDisplay *hwc_display = hwc_display_[display];
+  if (hwc_display && hwc_display_[display]->GetDisplayClass() == DISPLAY_CLASS_BUILTIN) {
+    error = INT32(hwc_display_[display]->GetPanelBrightness(brightness));
+    if (error) {
+      DLOGE("Failed to get the panel brightness. Error = %d", error);
+    }
+  }
+
+  return error;
+}
+
+int32_t HWCSession::setDisplayBrightness(uint32_t display, float brightness) {
+  return SetDisplayBrightness(static_cast<hwc2_device_t *>(this),
+                              static_cast<hwc2_display_t>(display), brightness);
 }
 
 }  // namespace sdm

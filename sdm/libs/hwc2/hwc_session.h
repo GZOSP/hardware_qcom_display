@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2020, The Linux Foundation. All rights reserved.
  * Not a Contribution.
  *
  * Copyright 2015 The Android Open Source Project
@@ -20,7 +20,7 @@
 #ifndef __HWC_SESSION_H__
 #define __HWC_SESSION_H__
 
-#include <vendor/display/config/1.10/IDisplayConfig.h>
+#include <vendor/display/config/1.11/IDisplayConfig.h>
 
 #include <core/core_interface.h>
 #include <utils/locker.h>
@@ -45,7 +45,7 @@
 
 namespace sdm {
 
-using vendor::display::config::V1_10::IDisplayConfig;
+using vendor::display::config::V1_11::IDisplayConfig;
 using vendor::display::config::V1_10::IDisplayCWBCallback;
 
 using ::android::hardware::Return;
@@ -208,6 +208,8 @@ class HWCSession : hwc2_device_t, HWCUEventListener, IDisplayConfig, public qCli
                                         uint32_t *outNumCapabilities, uint32_t *outCapabilities);
   static int32_t GetDisplayBrightnessSupport(hwc2_device_t *device, hwc2_display_t display,
                                              bool *outSupport);
+  static int32_t SetDisplayBrightness(hwc2_device_t *device, hwc2_display_t display,
+                                      float brightness);
 
   // HWCDisplayEventHandler
   virtual void DisplayPowerReset();
@@ -268,11 +270,12 @@ class HWCSession : hwc2_device_t, HWCUEventListener, IDisplayConfig, public qCli
   int32_t ControlPartialUpdate(int dpy, bool enable);
   int32_t DisplayBWTransactionPending(bool *status);
   int32_t SetSecondaryDisplayStatus(int disp_id, HWCDisplay::DisplayStatus status);
-  int32_t GetPanelBrightness(int *level);
   int32_t MinHdcpEncryptionLevelChanged(int disp_id, uint32_t min_enc_level);
   int32_t IsWbUbwcSupported(int *value);
   int32_t SetDynamicDSIClock(int64_t disp_id, uint32_t bitrate);
   bool HasHDRSupport(HWCDisplay *hwc_display);
+  int32_t getDisplayBrightness(uint32_t display, float *brightness);
+  int32_t setDisplayBrightness(uint32_t display, float brightness);
 
   // service methods
   void StartServices();
@@ -331,6 +334,7 @@ class HWCSession : hwc2_device_t, HWCUEventListener, IDisplayConfig, public qCli
   Return<int32_t> setCWBOutputBuffer(const ::android::sp<IDisplayCWBCallback> &callback,
                                      uint32_t disp_id, const Rect &rect, bool post_processed,
                                      const hidl_handle& buffer) override;
+  Return<int32_t> setQsyncMode(uint32_t disp_id, IDisplayConfig::QsyncMode mode) override;
 
   // QClient methods
   virtual android::status_t notifyCallback(uint32_t command, const android::Parcel *input_parcel,
@@ -380,6 +384,7 @@ class HWCSession : hwc2_device_t, HWCUEventListener, IDisplayConfig, public qCli
   bool IsPluggableDisplayConnected();
   hwc2_display_t GetActiveBuiltinDisplay();
   void HandlePendingRefresh();
+  void NotifyClientStatus(bool connected);
 
   CoreInterface *core_intf_ = nullptr;
   HWCDisplay *hwc_display_[HWCCallbacks::kNumDisplays] = {nullptr};

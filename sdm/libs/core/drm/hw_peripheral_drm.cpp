@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2017-2019, The Linux Foundation. All rights reserved.
+Copyright (c) 2017-2020, The Linux Foundation. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are
@@ -27,9 +27,13 @@ OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
 IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+#include <fcntl.h>
 #include <utils/debug.h>
+#include <utils/sys.h>
 #include <vector>
+#include <string>
 #include <cstring>
+#include <algorithm>
 
 #include "hw_peripheral_drm.h"
 
@@ -84,8 +88,11 @@ void HWPeripheralDRM::PopulateBitClkRates() {
   for (auto &mode_info : connector_info_.modes) {
     auto &mode = mode_info.mode;
     if (mode.hdisplay == width && mode.vdisplay == height) {
-      bitclk_rates_.push_back(mode_info.bit_clk_rate);
-      DLOGI("Possible bit_clk_rates %d", mode_info.bit_clk_rate);
+      if (std::find(bitclk_rates_.begin(), bitclk_rates_.end(), mode_info.bit_clk_rate) ==
+            bitclk_rates_.end()) {
+        bitclk_rates_.push_back(mode_info.bit_clk_rate);
+        DLOGI("Possible bit_clk_rates %d", mode_info.bit_clk_rate);
+      }
     }
   }
 
@@ -94,6 +101,10 @@ void HWPeripheralDRM::PopulateBitClkRates() {
 }
 
 DisplayError HWPeripheralDRM::SetDynamicDSIClock(uint64_t bit_clk_rate) {
+  if (last_power_mode_ == DRMPowerMode::DOZE_SUSPEND || last_power_mode_ == DRMPowerMode::OFF) {
+    return kErrorNotSupported;
+  }
+
   bit_clk_rate_ = bit_clk_rate;
   update_mode_ = true;
 
@@ -436,6 +447,9 @@ DisplayError HWPeripheralDRM::PowerOn(const HWQosData &qos_data, int *release_fe
     return kErrorUndefined;
   }
 
+  if (first_cycle_) {
+    return kErrorNone;
+  }
   drm_atomic_intf_->Perform(sde_drm::DRMOps::CRTC_SET_IDLE_PC_STATE, token_.crtc_id,
                             sde_drm::DRMIdlePCState::ENABLE);
   DisplayError err = HWDeviceDRM::PowerOn(qos_data, release_fence);
@@ -475,6 +489,98 @@ DisplayError HWPeripheralDRM::SetDisplayDppsAdROI(void *payload) {
   }
 
   return err;
+}
+
+DisplayError HWPeripheralDRM::SetPanelBrightness(int level) {
+  char buffer[kMaxSysfsCommandLength] = {0};
+
+  if (brightness_base_path_.empty()) {
+    return kErrorHardware;
+  }
+
+  std::string brightness_node(brightness_base_path_ + "brightness");
+  int fd = Sys::open_(brightness_node.c_str(), O_RDWR);
+  if (fd < 0) {
+    DLOGE("Failed to open node = %s, error = %s ", brightness_node.c_str(),
+          strerror(errno));
+    return kErrorFileDescriptor;
+  }
+
+  int32_t bytes = snprintf(buffer, kMaxSysfsCommandLength, "%d\n", level);
+  ssize_t ret = Sys::pwrite_(fd, buffer, static_cast<size_t>(bytes), 0);
+  if (ret <= 0) {
+    DLOGE("Failed to write to node = %s, error = %s ", brightness_node.c_str(),
+          strerror(errno));
+    Sys::close_(fd);
+    return kErrorHardware;
+  }
+
+  Sys::close_(fd);
+
+  return kErrorNone;
+}
+
+DisplayError HWPeripheralDRM::GetPanelBrightness(int *level) {
+  char value[kMaxStringLength] = {0};
+
+  if (!level) {
+    DLOGE("Invalid input, null pointer.");
+    return kErrorParameters;
+  }
+
+  if (brightness_base_path_.empty()) {
+    return kErrorHardware;
+  }
+
+  std::string brightness_node(brightness_base_path_ + "brightness");
+  int fd = Sys::open_(brightness_node.c_str(), O_RDWR);
+  if (fd < 0) {
+    DLOGE("Failed to open brightness node = %s, error = %s", brightness_node.c_str(),
+           strerror(errno));
+    return kErrorFileDescriptor;
+  }
+
+  if (Sys::pread_(fd, value, sizeof(value), 0) > 0) {
+    *level = atoi(value);
+  } else {
+    DLOGE("Failed to read panel brightness");
+    Sys::close_(fd);
+    return kErrorHardware;
+  }
+
+  Sys::close_(fd);
+
+  return kErrorNone;
+}
+
+void HWPeripheralDRM::GetHWPanelMaxBrightness() {
+  char value[kMaxStringLength] = {0};
+  hw_panel_info_.panel_max_brightness = 255.0f;
+
+  // Panel nodes, driver connector creation, and DSI probing all occur in sync, for each DSI. This
+  // means that the connector_type_id - 1 will reflect the same # as the panel # for panel node.
+  char s[kMaxStringLength] = {};
+  snprintf(s, sizeof(s), "/sys/class/backlight/panel%d-backlight/",
+           static_cast<int>(connector_info_.type_id - 1));
+  brightness_base_path_.assign(s);
+
+  std::string brightness_node(brightness_base_path_ + "max_brightness");
+  int fd = Sys::open_(brightness_node.c_str(), O_RDONLY);
+  if (fd < 0) {
+    DLOGE("Failed to open max brightness node = %s, error = %s", brightness_node.c_str(),
+          strerror(errno));
+    return;
+  }
+
+  if (Sys::pread_(fd, value, sizeof(value), 0) > 0) {
+    hw_panel_info_.panel_max_brightness = static_cast<float>(atof(value));
+    DLOGI_IF(kTagDriverConfig, "Max brightness = %f", hw_panel_info_.panel_max_brightness);
+  } else {
+    DLOGE("Failed to read max brightness. error = %s", strerror(errno));
+  }
+
+  Sys::close_(fd);
+  return;
 }
 
 }  // namespace sdm

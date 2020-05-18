@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2014 - 2019, The Linux Foundation. All rights reserved.
+* Copyright (c) 2014 - 2020, The Linux Foundation. All rights reserved.
 *
 * Redistribution and use in source and binary forms, with or without modification, are permitted
 * provided that the following conditions are met:
@@ -56,6 +56,8 @@ class DisplayBuiltIn : public DisplayBase, HWEventHandler, DppsPropIntf {
   DisplayBuiltIn(int32_t display_id, DisplayEventHandler *event_handler,
                  HWInfoInterface *hw_info_intf, BufferSyncHandler *buffer_sync_handler,
                  BufferAllocator *buffer_allocator, CompManager *comp_manager);
+  virtual ~DisplayBuiltIn();
+
   virtual DisplayError Init();
   virtual DisplayError Deinit();
   virtual DisplayError Prepare(LayerStack *layer_stack);
@@ -69,8 +71,8 @@ class DisplayBuiltIn : public DisplayBase, HWEventHandler, DppsPropIntf {
   virtual DisplayError GetRefreshRateRange(uint32_t *min_refresh_rate, uint32_t *max_refresh_rate);
   virtual DisplayError SetRefreshRate(uint32_t refresh_rate, bool final_rate);
   virtual DisplayError GetRefreshRate(uint32_t *refresh_rate);
-  virtual DisplayError SetPanelBrightness(int level);
-  virtual DisplayError GetPanelBrightness(int *level);
+  virtual DisplayError SetPanelBrightness(float brightness);
+  virtual DisplayError GetPanelBrightness(float *brightness);
   virtual DisplayError HandleSecureEvent(SecureEvent secure_event, LayerStack *layer_stack);
   virtual DisplayError SetDisplayDppsAdROI(void *payload);
   virtual DisplayError SetQSyncMode(QSyncMode qsync_mode);
@@ -95,9 +97,9 @@ class DisplayBuiltIn : public DisplayBase, HWEventHandler, DppsPropIntf {
   virtual DisplayError DppsProcessOps(enum DppsOps op, void *payload, size_t size);
 
  private:
-  bool NeedsAVREnable();
   bool CanCompareFrameROI(LayerStack *layer_stack);
   bool CanSkipDisplayPrepare(LayerStack *layer_stack);
+  HWAVRModes GetAvrMode(QSyncMode mode);
 
   std::vector<HWEvent> event_list_;
   bool avr_prop_disabled_ = false;
@@ -105,9 +107,12 @@ class DisplayBuiltIn : public DisplayBase, HWEventHandler, DppsPropIntf {
   bool handle_idle_timeout_ = false;
   bool commit_event_enabled_ = false;
   DppsInfo dpps_info_ = {};
-  QSyncMode qsync_mode_ = kQSyncModeNone;
   LayerRect left_frame_roi_ = {};
   LayerRect right_frame_roi_ = {};
+  bool first_cycle_ = true;
+  int previous_retire_fence_ = -1;
+  float level_remainder_ = 0.0f;
+  recursive_mutex brightness_lock_;
 };
 
 }  // namespace sdm
