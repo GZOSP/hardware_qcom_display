@@ -15,6 +15,8 @@
 LOCAL_PATH:= $(call my-dir)
 # HAL module implemenation stored in
 # hw/<COPYPIX_HARDWARE_MODULE_ID>.<ro.board.platform>.so
+
+ifneq ($(TARGET_PROVIDES_LIBLIGHT), true)
 include $(CLEAR_VARS)
 
 LOCAL_SRC_FILES := lights.c
@@ -31,3 +33,4 @@ LOCAL_MODULE_TAGS := optional
 LOCAL_VENDOR_MODULE := true
 
 include $(BUILD_SHARED_LIBRARY)
+endif
