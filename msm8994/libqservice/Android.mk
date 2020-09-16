@@ -15,9 +15,7 @@ LOCAL_ADDITIONAL_DEPENDENCIES := $(common_deps)
 LOCAL_SRC_FILES               := QService.cpp \
                                  IQService.cpp \
                                  IQClient.cpp
-LOCAL_COPY_HEADERS_TO         := $(common_header_export_path)
-LOCAL_COPY_HEADERS            := IQService.h \
-                                 IQClient.h
-
+LOCAL_C_INCLUDES              += ${LOCAL_PATH}/includes/libqservice
+LOCAL_EXPORT_C_INCLUDES       := $(LOCAL_PATH)/includes
 
 include $(BUILD_SHARED_LIBRARY)

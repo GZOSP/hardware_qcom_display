@@ -30,8 +30,9 @@ LOCAL_SHARED_LIBRARIES        += libqdutils libGLESv1_CM
 LOCAL_CFLAGS                  := $(common_flags) -DLOG_TAG=\"qdgralloc\"
 LOCAL_ADDITIONAL_DEPENDENCIES := $(common_deps) $(kernel_deps)
 LOCAL_SRC_FILES               := gpu.cpp gralloc.cpp framebuffer.cpp mapper.cpp
-LOCAL_COPY_HEADERS_TO         := $(common_header_export_path)
-LOCAL_COPY_HEADERS            := gralloc_priv.h gr.h
+LOCAL_C_INCLUDES              += $(LOCAL_PATH)/includes/libgralloc
+#LOCAL_COPY_HEADERS_TO         := $(common_header_export_path)
+#LOCAL_COPY_HEADERS            := gralloc_priv.h gr.h
 
 LOCAL_STATIC_LIBRARIES        := libgralloc1-adapter
 LOCAL_SHARED_LIBRARIES        += libsync
@@ -46,7 +47,7 @@ include $(BUILD_SHARED_LIBRARY)
 include $(CLEAR_VARS)
 
 # b/24171136 many files not compiling with clang/llvm yet
-LOCAL_CLANG := false
+LOCAL_CLANG := true
 
 LOCAL_MODULE                  := libmemalloc
 LOCAL_MODULE_TAGS             := optional
@@ -55,6 +56,8 @@ LOCAL_SHARED_LIBRARIES        := $(common_libs) libqdutils libdl
 LOCAL_CFLAGS                  := $(common_flags) -DLOG_TAG=\"qdmemalloc\"
 LOCAL_ADDITIONAL_DEPENDENCIES := $(common_deps) $(kernel_deps)
 LOCAL_SRC_FILES               := ionalloc.cpp alloc_controller.cpp
-LOCAL_COPY_HEADERS            := alloc_controller.h memalloc.h
+#LOCAL_COPY_HEADERS            := alloc_controller.h memalloc.h
+LOCAL_C_INCLUDES              += $(LOCAL_PATH)/includes/libgralloc
+LOCAL_EXPORT_C_INCLUDES       += $(LOCAL_PATH)/includes
 
 include $(BUILD_SHARED_LIBRARY)
